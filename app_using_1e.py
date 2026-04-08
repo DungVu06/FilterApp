@@ -67,6 +67,15 @@ class VideoThread(QThread):
         self.show_glasses = False
         self.show_moustache = False
 
+        self.model_points_3d = np.array([
+            (0.0, 0.0, 0.0),             # 54: Chóp mũi
+            (0.0, -330.0, -65.0),        # 16: Cằm
+            (-225.0, 170.0, -135.0),     # 60: Đuôi mắt trái
+            (225.0, 170.0, -135.0),      # 72: Đuôi mắt phải
+            (-150.0, -150.0, -125.0),    # 76: Khóe miệng trái
+            (150.0, -150.0, -125.0)      # 82: Khóe miệng phải
+        ], dtype=np.float64)
+
     def run(self):
         cap = cv2.VideoCapture(0)
         face_filters = {}
@@ -141,11 +150,9 @@ class VideoThread(QThread):
                         # Tính khoảng cách di chuyển so với frame trước
                         dist = np.linalg.norm(np.array([smooth_x, smooth_y]) - prev_pt)
                         
-                        # Nếu điểm chỉ nhích dưới 1.5 pixel (Jiggle), ta ép nó đứng im!
-                        if dist < 1.5 and prev_pt[0] != 0:
+                        if dist < 2 and prev_pt[0] != 0:
                             smooth_x, smooth_y = prev_pt
                         else:
-                            # Nếu di chuyển thật, cập nhật điểm cũ
                             face_filters[face_id]["prev_smoothed"][i] = [smooth_x, smooth_y]
 
                         smoothed_points[i] = [smooth_x, smooth_y]
@@ -156,7 +163,36 @@ class VideoThread(QThread):
                     
                     dy = right_eye[1] - left_eye[1]
                     dx = right_eye[0] - left_eye[0]
-                    head_angle = -np.degrees(np.arctan2(dy, dx)) 
+                    image_points = np.array([
+                        smoothed_points[54],     # Chóp mũi
+                        smoothed_points[16],     # Cằm
+                        smoothed_points[60],     # Đuôi mắt trái
+                        smoothed_points[72],     # Đuôi mắt phải
+                        smoothed_points[76],     # Khóe miệng trái
+                        smoothed_points[82]      # Khóe miệng phải
+                    ], dtype=np.float64)
+
+                    # Thiết lập thông số camera giả định
+                    focal_length = w
+                    center = (w / 2, h / 2)
+                    camera_matrix = np.array([
+                        [focal_length, 0, center[0]],
+                        [0, focal_length, center[1]],
+                        [0, 0, 1]
+                    ], dtype=np.float64)
+
+                    dist_coeffs = np.zeros((4, 1))
+                    
+                    # Giải phương trình 3D
+                    success, rotation_vector, translation_vector = cv2.solvePnP(
+                        self.model_points_3d, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
+                    )
+
+                    # Quy đổi vector xoay thành góc quay thực tế
+                    rmat, _ = cv2.Rodrigues(rotation_vector)
+                    angles, _, _, _, _, _ = cv2.RQDecomp3x3(rmat)
+                    head_angle = -angles[2] # Lấy góc Z (Roll) để xoay sticker
+                    # ====================================================
 
                     if self.show_glasses and self.filter_glasses is not None:
                         nose_bridge = smoothed_points[51]  
