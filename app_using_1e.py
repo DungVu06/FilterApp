@@ -66,6 +66,7 @@ class VideoThread(QThread):
         self.filter_moustache = cv2.imread("assets/moustache.png", cv2.IMREAD_UNCHANGED)
         self.show_glasses = False
         self.show_moustache = False
+        self.show_landmarks = False
 
         self.model_points_3d = np.array([
             (0.0, 0.0, 0.0),             # 54: Chóp mũi
@@ -156,7 +157,9 @@ class VideoThread(QThread):
                             face_filters[face_id]["prev_smoothed"][i] = [smooth_x, smooth_y]
 
                         smoothed_points[i] = [smooth_x, smooth_y]
-                        cv2.circle(frame, (smooth_x, smooth_y), 2, (180, 105, 255), -1)
+
+                        if self.show_landmarks:
+                            cv2.circle(frame, (smooth_x, smooth_y), 1, (180, 105, 255), -1)
                     
                     left_eye = smoothed_points[60]     
                     right_eye = smoothed_points[72] 
@@ -195,8 +198,16 @@ class VideoThread(QThread):
                     # ====================================================
 
                     if self.show_glasses and self.filter_glasses is not None:
-                        nose_bridge = smoothed_points[51]  
+                        # Điểm 60 (Ngoài trái), 64 (Trong trái), 68 (Trong phải), 72 (Ngoài phải)
+                        eye_points = np.array([
+                            smoothed_points[60], smoothed_points[64], 
+                            smoothed_points[68], smoothed_points[72]
+                        ])
+                        # Tâm mới của kính cực kỳ đầm và đúng vị trí
+                        glasses_center = np.mean(eye_points, axis=0).astype(int) 
                         
+                        left_eye = smoothed_points[60]     
+                        right_eye = smoothed_points[72] 
                         eye_width = np.linalg.norm(left_eye - right_eye)
                         glasses_width = int(eye_width * 2.0)
                         
@@ -205,18 +216,19 @@ class VideoThread(QThread):
                         
                         if glasses_width > 0 and glasses_height > 0:
                             resized_glasses = cv2.resize(self.filter_glasses, (glasses_width, glasses_height))
-                            
                             rotated_glasses = rotate_image(resized_glasses, head_angle)
                             rot_h, rot_w = rotated_glasses.shape[:2] 
-                            gx = int(nose_bridge[0] - rot_w / 2)
-                            gy = int(nose_bridge[1] - rot_h / 2)
+                            
+                            # Dùng glasses_center thay vì nose_bridge
+                            gx = int(glasses_center[0] - rot_w / 2)
+                            gy = int(glasses_center[1] - rot_h / 2)
                             
                             frame = overlay_transparent(frame, rotated_glasses, gx, gy)
 
                     if self.show_moustache and self.filter_moustache is not None:
                         moustache_left = smoothed_points[55]  
                         moustache_right = smoothed_points[59]  
-                        moustache_mid = smoothed_points[57]  
+                        moustache_mid = np.mean(smoothed_points[56:59], axis=0).astype(int)
                         
                         moustache_width = np.linalg.norm(moustache_left - moustache_right)
                         moustache_width = int(moustache_width * 3)
@@ -256,7 +268,7 @@ class VideoThread(QThread):
 class FaceLandmarkApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YORHA Face Landmark AI 🌸")
+        self.setWindowTitle("🌸 Face Landmark AI 🌸")
         self.resize(1000, 750)
         
         self.setStyleSheet("""
@@ -336,12 +348,11 @@ class FaceLandmarkApp(QWidget):
         main_layout.setSpacing(20)
 
         # Title
-        self.title_label = QLabel("YORHA Face Landmark AI 🌸", self)
+        self.title_label = QLabel("🌸 Face Landmark AI 🌸", self)
         self.title_label.setObjectName("TitleLabel")
         self.title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.title_label)
 
-        # Video and Controls area
         content_layout = QHBoxLayout()
         content_layout.setSpacing(25)
 
@@ -365,14 +376,17 @@ class FaceLandmarkApp(QWidget):
         
         control_layout.addStretch(1)
 
-        self.cb_glasses = QCheckBox("😎 Kính Thug Life", self)
-        self.cb_moustache = QCheckBox("🥸 Moustache họa sĩ người áo", self)
+        self.cb_glasses = QCheckBox("Kính Thug Life", self)
+        self.cb_moustache = QCheckBox("Moustache họa sĩ người Áo", self)
+        self.cb_landmarks = QCheckBox("Hiển thị Landmarks", self)
+
         control_layout.addWidget(self.cb_glasses)
         control_layout.addWidget(self.cb_moustache)
+        control_layout.addWidget(self.cb_landmarks)
 
         control_layout.addStretch(1)
 
-        self.btn_start = QPushButton("▶ Start AI", self)
+        self.btn_start = QPushButton("▶ Start", self)
         self.btn_stop = QPushButton("🛑 Stop", self)
         self.btn_stop.setObjectName("StopBtn")
         control_layout.addWidget(self.btn_start)
@@ -393,11 +407,13 @@ class FaceLandmarkApp(QWidget):
         self.btn_stop.clicked.connect(self.stop_video)
         self.cb_glasses.stateChanged.connect(self.toggle_filters)
         self.cb_moustache.stateChanged.connect(self.toggle_filters)
+        self.cb_landmarks.stateChanged.connect(self.toggle_filters)
         
         self.thread = None
 
     def toggle_filters(self):
         if self.thread and self.thread.isRunning():
+            self.thread.show_landmarks = self.cb_landmarks.isChecked()
             self.thread.show_glasses = self.cb_glasses.isChecked()
             self.thread.show_moustache = self.cb_moustache.isChecked()
 
@@ -408,6 +424,7 @@ class FaceLandmarkApp(QWidget):
             
             self.thread = VideoThread(landmark_model_wp, device)
             
+            self.thread.show_landmarks = self.cb_landmarks.isChecked()
             self.thread.show_glasses = self.cb_glasses.isChecked()
             self.thread.show_moustache = self.cb_moustache.isChecked()
             
